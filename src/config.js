@@ -6,6 +6,9 @@
 //   usedResaleValue   – optional: resale value for pre-owned listings, a number or "auto".
 //                       Leave it out and used listings get the same value as new ones.
 //   minProfitMargin   – minimum net profit (after fees + shipping) to trigger an alert
+//   sizes             – optional: only search these sizes, e.g. ["10", "10.5", "11"] for shoes or
+//                       ["L", "XL"] for clothing. Resale estimates then use those sizes too.
+//                       Leave it out to search every size.
 export const WATCHLIST = [
   {
     keyword: "Supreme Box Logo Hoodie",

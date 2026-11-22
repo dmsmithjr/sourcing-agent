@@ -51,6 +51,7 @@ To run this agent, obtain API credentials from the respective developer platform
 | `DISCORD_BOT_TOKEN` *(Optional)* | Discord Developer Portal | Watchlist management interface |
 | `DISCORD_COMMAND_CHANNEL_ID` *(Optional)* | Discord Client | Restricted channel ID for commands |
 | `DISCORD_PUBLIC_KEY` *(Optional)* | Discord Developer Portal | Interaction verification for Slash commands |
+| `GOOGLE_SHEETS_WEBHOOK_URL` *(Optional)* | Google Apps Script web app | Logs every alert to a Google Sheet |
 
 > **Security Notice:** Never commit actual API keys or tokens to public repositories. All sensitive variables must be supplied via GitHub Repository Secrets or local `.env` files (excluded via `.gitignore`).
 
@@ -129,7 +130,8 @@ module.exports = {
       keyword: "Item Title Keyword",
       maxBuyPrice: 100,          // Maximum acceptable purchase price ($)
       targetResaleValue: 180,    // Estimated resale value ($)
-      minProfitMargin: 30        // Minimum required profit after expenses ($)
+      minProfitMargin: 30,       // Minimum required profit after expenses ($)
+      sizes: ["10", "10.5"]      // Optional: only search these sizes (e.g. ["L", "XL"] for clothing)
     }
   ],
 
@@ -143,6 +145,19 @@ module.exports = {
 
 ---
 
+### 5. Google Sheets Logging (Optional)
+
+Every alert sent to Discord can also be added as a row in a Google Sheet.
+
+1. Create a new Google Sheet (or open an existing one).
+2. Go to **Extensions** → **Apps Script**, delete the placeholder code, paste in the contents of `scripts/googleSheets.gs`, and click **Save**.
+3. Click **Deploy** → **New deployment** → gear icon → **Web app**. Set **Execute as** to *Me* and **Who has access** to *Anyone*, then click **Deploy** and approve the permissions prompt.
+4. Copy the **Web app URL** (ends in `/exec`) and add it as `GOOGLE_SHEETS_WEBHOOK_URL` in your `.env` file and GitHub Repository Secrets.
+
+The header row is created automatically on the first alert. Keep the URL private: anyone who has it can add rows to the sheet.
+
+---
+
 ## Repository Overview
 
 ```text
@@ -152,6 +167,7 @@ sourcing-agent/
 ├── netlify/
 │   └── functions/          # Serverless interaction handlers for Discord
 ├── scripts/
+│   ├── googleSheets.gs     # Apps Script that appends alerts to a Google Sheet
 │   └── registerCommands.js # Command registration utility for Discord API
 ├── src/
 │   ├── agent.js            # Core scanner and decision orchestrator
@@ -159,7 +175,8 @@ sourcing-agent/
 │   ├── discordCommands.js  # Command processing and state persistence logic
 │   ├── ebayClient.js       # eBay Browse API integration client
 │   ├── gemini.js           # Gemini API client and prompt templates
-│   └── seenStore.js        # Deduplication cache handler
+│   ├── seenStore.js        # Deduplication cache handler
+│   └── sheetsLogger.js     # Sends each alert to the Google Sheet
 ├── .env.example            # Environment template file
 └── README.md
 

@@ -16,6 +16,7 @@ const HELP_TEXT = [
   "  e.g. `!add Jordan 4 Black Cat 200 320 50`",
   "  or use `auto` as the resale value to estimate it from eBay: `!add Jordan 4 Black Cat 200 auto 50`",
   "  add `used=<value>` for a separate pre-owned resale value: `!add Jordan 4 Black Cat 200 320 50 used=250`",
+  "  add `size=<sizes>` to only search certain sizes (commas, no spaces): `!add Jordan 4 Black Cat 200 auto 50 size=10,10.5`",
   "`!remove <number or item name>` — number from `!list`",
   "`!list` — show what's being searched",
   "`!help` — show this message",
@@ -55,7 +56,17 @@ function formatResale(value) {
 
 function describeResale(item) {
   const resale = `resale ${formatResale(item.targetResaleValue)}`;
-  return item.usedResaleValue === undefined ? resale : `${resale} (used ${formatResale(item.usedResaleValue)})`;
+  const withUsed =
+    item.usedResaleValue === undefined ? resale : `${resale} (used ${formatResale(item.usedResaleValue)})`;
+  return item.sizes ? `size ${item.sizes.join(", ")}, ${withUsed}` : withUsed;
+}
+
+// Pulls a "name=value" option out of args wherever it appears and returns its value.
+function takeOption(args, ...names) {
+  const index = args.findIndex((a) => names.some((name) => a.toLowerCase().startsWith(`${name}=`)));
+  if (index < 0) return undefined;
+  const [arg] = args.splice(index, 1);
+  return arg.slice(arg.indexOf("=") + 1);
 }
 
 function parseResale(token) {
@@ -127,12 +138,16 @@ function applyCommand(items, content) {
       return formatList(items);
 
     case "!add": {
-      // "used=<value>" can go anywhere; pull it out before reading the trailing numbers.
-      const usedArg = args.find((a) => /^used=/i.test(a));
-      if (usedArg) args.splice(args.indexOf(usedArg), 1);
-      const usedResaleValue = usedArg ? parseResale(usedArg.slice("used=".length)) : undefined;
+      // "used=" and "size=" can go anywhere; pull them out before reading the trailing numbers.
+      const usedArg = takeOption(args, "used");
+      const usedResaleValue = usedArg === undefined ? undefined : parseResale(usedArg);
       if (usedResaleValue === null) {
         return "❌ `used=` needs a number or `auto`, e.g. `used=250`.";
+      }
+      const sizeArg = takeOption(args, "size", "sizes");
+      const sizes = sizeArg?.split(",").map((s) => s.trim()).filter(Boolean);
+      if (sizes && !sizes.length) {
+        return "❌ `size=` needs at least one size, e.g. `size=10,10.5` or `size=L,XL`.";
       }
       if (args.length < 4) {
         return "❌ Usage: `!add <item name> <max buy> <resale value> <min profit>`\ne.g. `!add Jordan 4 Black Cat 200 320 50`";
@@ -151,6 +166,7 @@ function applyCommand(items, content) {
       }
       const item = { keyword, maxBuyPrice, targetResaleValue, minProfitMargin };
       if (usedResaleValue !== undefined) item.usedResaleValue = usedResaleValue;
+      if (sizes) item.sizes = sizes;
       if (formatState({ lastCommandId: "0".repeat(20), items: [...items, item] }).length > MAX_MESSAGE_LENGTH) {
         return "❌ No room left to store another item. `!remove` something first.";
       }

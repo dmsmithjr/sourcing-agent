@@ -32,7 +32,8 @@ function toCommandText(data) {
     case "add":
       return (
         `!add ${opt.item} ${opt.max_buy} ${opt.resale ?? "auto"} ${opt.min_profit}` +
-        (opt.used_resale === undefined ? "" : ` used=${opt.used_resale}`)
+        (opt.used_resale === undefined ? "" : ` used=${opt.used_resale}`) +
+        (opt.sizes === undefined ? "" : ` size=${opt.sizes.replace(/\s+/g, "")}`)
       );
     case "remove":
       return `!remove ${opt.item}`;

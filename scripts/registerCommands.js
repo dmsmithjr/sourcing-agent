@@ -19,6 +19,7 @@ const COMMANDS = [
       // Discord requires optional options after required ones. Leaving it out means "estimate it".
       { type: NUMBER, name: "resale", description: "What it usually sells for ($). Leave out to estimate from eBay", min_value: 0 },
       { type: NUMBER, name: "used_resale", description: "What a pre-owned one sells for ($), if different", min_value: 0 },
+      { type: STRING, name: "sizes", description: "Only search these sizes, e.g. 10,10.5,11 or L,XL. Leave out for all sizes" },
     ],
   },
   {

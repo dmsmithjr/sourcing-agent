@@ -1,9 +1,10 @@
 import "dotenv/config";
 import axios from "axios";
 import { GoogleGenAI } from "@google/genai";
-import { searchListings, estimateResaleValue, isUsed } from "./ebayClient.js";
+import { searchListings, estimateResaleValue, isUsed, sizeFilter } from "./ebayClient.js";
 import { loadSeen, saveSeen } from "./seenStore.js";
 import { syncWatchlist } from "./discordCommands.js";
+import { logAlertToSheet } from "./sheetsLogger.js";
 import {
   WATCHLIST,
   MARKETPLACE_FEE_RATE,
@@ -74,18 +75,20 @@ function buildPrompt(item, listings) {
         `Seller: ${l.seller} (feedback: ${l.sellerFeedback ?? "n/a"}%)`
     )
     .join("\n");
+  const sizeLine = item.size ? `\nSIZES WANTED: ${item.size.sizes.join(", ")}` : "";
+  const sizeRule = item.size ? "\nAlso reject it if the title clearly states a size other than the sizes wanted." : "";
 
   return `You are an expert streetwear, sneaker, and outerwear reseller evaluating eBay listings.
 
 TARGET ITEM: "${item.keyword}"
-TYPICAL RESALE VALUE: ${formatResale(item)}
+TYPICAL RESALE VALUE: ${formatResale(item)}${sizeLine}
 
 LISTINGS:
 ${lines}
 
 For EACH listing, decide whether it is a genuine match for the target item. Reject it if it is a
 different model/colorway, a replica/fake/"inspired" item, a kids/GS/toddler size when the target
-is adult, an empty box, a bundle/lot, parts only, or otherwise not the actual item.
+is adult, an empty box, a bundle/lot, parts only, or otherwise not the actual item.${sizeRule}
 Also reject listings priced implausibly low for an authentic item in that condition (for example
 under about 40% of the typical resale value): these are usually fakes or scams. Only accept a
 cheap listing if the title gives a clear, believable reason for the price.
@@ -140,6 +143,7 @@ async function sendDiscordAlert(item, listing, verdict) {
       { name: "Condition", value: listing.condition, inline: true },
       { name: "Seller", value: `${listing.seller} (${listing.sellerFeedback ?? "n/a"}%)`, inline: true },
       { name: "Watchlist", value: item.keyword, inline: true },
+      ...(item.size ? [{ name: "Size", value: item.size.sizes.join(", "), inline: true }] : []),
     ],
     footer: { text: `Fees ${MARKETPLACE_FEE_RATE * 100}% + $${SHIPPING_COST} shipping · ${MODEL}` },
     timestamp: new Date().toISOString(),
@@ -162,10 +166,16 @@ async function sendDiscordAlert(item, listing, verdict) {
 async function processWatchItem(watchItem, seen) {
   console.log(`\n🔎 ${watchItem.keyword} (max $${watchItem.maxBuyPrice})`);
   const item = { ...watchItem };
-  if (needsEstimate(item)) item.resaleEstimate = await estimateResaleValue(item.keyword);
+  // Size changes resale value a lot, so both the search and the estimate stick to the sizes wanted.
+  if (item.sizes?.length) {
+    item.size = await sizeFilter(item.keyword, item.sizes);
+    console.log(`   ${item.size.aspect}: ${item.size.sizes.join(", ")}`);
+  }
+  const sizeParams = item.size?.params ?? {};
+  if (needsEstimate(item)) item.resaleEstimate = await estimateResaleValue(item.keyword, sizeParams);
   console.log(`   resale value: ${formatResale(item)}`);
 
-  const listings = await searchListings(item.keyword, item.maxBuyPrice, RESULTS_PER_KEYWORD);
+  const listings = await searchListings(item.keyword, item.maxBuyPrice, RESULTS_PER_KEYWORD, sizeParams);
   console.log(`   ${listings.length} listing(s) found`);
 
   // Do the math locally first so Gemini quota is only spent on listings that can clear the bar.
@@ -192,6 +202,12 @@ async function processWatchItem(watchItem, seen) {
       if (verdict.isValidMatch && verdict.estimatedProfit >= item.minProfitMargin) {
         await sendDiscordAlert(item, listing, verdict);
         alerts++;
+        // A sheet failure shouldn't block the alert or cause it to be re-sent next run.
+        try {
+          await logAlertToSheet(item, listing, verdict, totalBuyCost(listing));
+        } catch (err) {
+          console.error(`   ⚠️  Google Sheets log failed for "${listing.title}": ${err.message}`);
+        }
       }
       // Listings the model skipped over get another look next run.
       if (verdict.hasVerdict) seen.set(listing.itemId, new Date().toISOString());

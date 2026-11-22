@@ -45,7 +45,7 @@ function cheapestShipping(options = []) {
   return costs.length ? Math.min(...costs) : null;
 }
 
-async function search(params) {
+async function browse(params) {
   const token = await getAccessToken();
 
   const { data } = await axios.get(SEARCH_URL, {
@@ -56,7 +56,11 @@ async function search(params) {
     },
     params,
   });
+  return data;
+}
 
+async function search(params) {
+  const data = await browse(params);
   return (data.itemSummaries ?? []).map((item) => ({
     itemId: item.itemId,
     title: item.title,
@@ -73,15 +77,63 @@ async function search(params) {
 
 /**
  * Search eBay for fixed-price listings at or below maxPrice (USD).
- * Returns a trimmed list of listing objects.
+ * Returns a trimmed list of listing objects. extraParams narrows the search (see sizeFilter).
  */
-export function searchListings(keyword, maxPrice, limit = 20) {
+export function searchListings(keyword, maxPrice, limit = 20, extraParams = {}) {
   return search({
     q: keyword,
     limit,
     sort: "newlyListed",
     filter: `price:[..${maxPrice}],priceCurrency:USD,buyingOptions:{FIXED_PRICE}`,
+    ...extraParams,
   });
+}
+
+// Other ways people write the sizes eBay lists as S, M, L, XL, 2XL...
+const SIZE_ALIASES = {
+  small: "s", medium: "m", large: "l",
+  xlarge: "xl", "x-large": "xl", xxl: "2xl", xxlarge: "2xl", "xx-large": "2xl", xxxl: "3xl",
+};
+
+function normalizeSize(size) {
+  const s = String(size).toLowerCase().replace(/\b(us|men'?s|size)\b/g, "").replace(/\s+/g, "");
+  return SIZE_ALIASES[s] ?? s;
+}
+
+// Sneakers list US, UK and EU sizes; clothing has "Size" plus a "Size Type" we don't want.
+function pickSizeAspect(aspects) {
+  const named = (pattern) => aspects.find((a) => pattern.test(a.localizedAspectName));
+  return named(/^us shoe size/i) ?? named(/^size$/i) ?? named(/^(?!.*type).*size/i);
+}
+
+/**
+ * Turns sizes like ["10", "10.5"] or ["L", "XL"] into extra search params so eBay only returns
+ * listings in those sizes. eBay filters size per category, so this looks up the item's main
+ * category and its size field first. Returns { params, aspect, sizes }. Throws when none of the
+ * sizes are listed, so a typo doesn't quietly turn into a search that finds nothing.
+ */
+export async function sizeFilter(keyword, sizes) {
+  const data = await browse({ q: keyword, limit: 1, fieldgroups: "ASPECT_REFINEMENTS" });
+  const { dominantCategoryId, aspectDistributions = [] } = data.refinement ?? {};
+  const aspect = dominantCategoryId && pickSizeAspect(aspectDistributions);
+  if (!aspect) throw new Error(`eBay has no size filter for "${keyword}"`);
+
+  const wanted = new Set(sizes.map(normalizeSize));
+  const available = aspect.aspectValueDistributions.map((v) => v.localizedAspectValue);
+  const matched = available.filter((v) => wanted.has(normalizeSize(v)));
+  if (!matched.length) {
+    throw new Error(
+      `No "${keyword}" listings in size ${sizes.join(", ")}. eBay has: ${available.slice(0, 30).join(", ")}`
+    );
+  }
+  return {
+    params: {
+      category_ids: dominantCategoryId,
+      aspect_filter: `categoryId:${dominantCategoryId},${aspect.localizedAspectName}:{${matched.join("|")}}`,
+    },
+    aspect: aspect.localizedAspectName,
+    sizes: matched,
+  };
 }
 
 export function isUsed(condition) {
@@ -104,14 +156,16 @@ function percentile(values) {
 
 /**
  * Estimates what an item resells for from current Buy It Now listings (price + shipping),
- * separately for new and used condition. Returns { all, new, used, sampleSize }; new/used
- * are null when that condition has too few listings. Throws if there are too few overall.
+ * separately for new and used condition. Pass sizeFilter params to price only those sizes.
+ * Returns { all, new, used, sampleSize }; new/used are null when that condition has too few
+ * listings. Throws if there are too few overall.
  */
-export async function estimateResaleValue(keyword) {
+export async function estimateResaleValue(keyword, extraParams = {}) {
   const listings = await search({
     q: keyword,
     limit: ESTIMATE_SAMPLE_SIZE,
     filter: "priceCurrency:USD,buyingOptions:{FIXED_PRICE}",
+    ...extraParams,
   });
   const total = (l) => l.price + (l.shippingCost ?? 0);
 
